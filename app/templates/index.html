@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sales Intelligence Automator</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Sales Intelligence Automator</h1>
+    <p class="subtitle">Paste leads, run research, get a structured sales brief per company.</p>
+  </header>
+
+  <main>
+    <section class="panel">
+      <form action="/analyze" method="post" enctype="multipart/form-data" id="analyze-form">
+        <label for="leads_text">Leads (one per line -- a URL, a company name, or "Company Name - City ST")</label>
+        <textarea id="leads_text" name="leads_text" rows="8"
+          placeholder="https://www.example-roofing.com&#10;Joe's Backyard Landscaping - Phoenix AZ"></textarea>
+
+        <label for="leads_file">...or upload a .txt/.csv file (one lead per line)</label>
+        <input type="file" id="leads_file" name="leads_file" accept=".txt,.csv" />
+
+        <button type="submit" id="submit-btn">Run Analysis</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="results-header">
+        <h2>Results</h2>
+        <span id="auto-refresh-note" class="muted"></span>
+      </div>
+      <div id="results" class="results-grid">
+        {% for lead in leads %}
+        <div class="card status-{{ lead.status.value if lead.status.value else lead.status }}" data-id="{{ lead.id }}">
+          <div class="card-header">
+            <strong>{{ lead.raw_input }}</strong>
+            <span class="badge badge-{{ lead.status.value if lead.status.value else lead.status }}">{{ lead.status.value if lead.status.value else lead.status }}</span>
+          </div>
+          {% if lead.resolved_url %}
+          <div class="url"><a href="{{ lead.resolved_url }}" target="_blank" rel="noopener">{{ lead.resolved_url }}</a></div>
+          {% endif %}
+
+          {% if lead.error_message %}
+          <div class="error">{{ lead.error_message }}</div>
+          {% endif %}
+
+          {% if lead.brief %}
+          <div class="brief">
+            <div class="qualify {{ 'yes' if lead.brief.is_b2b_qualified else 'no' }}">
+              B2B Qualified: {{ "YES" if lead.brief.is_b2b_qualified else "NO" }}
+            </div>
+            <p class="reason">{{ lead.brief.qualification_reason }}</p>
+
+            <h4>Company Overview</h4>
+            <p>{{ lead.brief.company_overview }}</p>
+
+            <h4>Core Product / Service</h4>
+            <p>{{ lead.brief.core_product_or_service }}</p>
+
+            <h4>Target Customer</h4>
+            <p>{{ lead.brief.target_customer }}</p>
+
+            <h4>Sales Questions</h4>
+            <ul>
+              {% for q in lead.brief.sales_questions %}
+              <li>{{ q }}</li>
+              {% endfor %}
+            </ul>
+            <div class="confidence">Confidence: {{ lead.brief.confidence }}</div>
+          </div>
+          {% endif %}
+        </div>
+        {% else %}
+        <p class="muted">No leads yet. Paste some above and click "Run Analysis".</p>
+        {% endfor %}
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const inProgressStatuses = new Set(["pending", "researching", "analyzing"]);
+
+    function hasInProgress() {
+      return document.querySelectorAll(
+        '.card.status-pending, .card.status-researching, .card.status-analyzing'
+      ).length > 0;
+    }
+
+    async function refreshResults() {
+      const resp = await fetch('/api/leads');
+      const data = await resp.json();
+      if (data.leads && data.leads.length > 0) {
+        renderLeads(data.leads);
+      }
+      const note = document.getElementById('auto-refresh-note');
+      note.textContent = hasInProgress() ? 'Auto-refreshing while research is in progress...' : '';
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str || '';
+      return div.innerHTML;
+    }
+
+    function renderLeads(leads) {
+      const container = document.getElementById('results');
+      container.innerHTML = '';
+      leads.forEach(lead => {
+        const div = document.createElement('div');
+        div.className = `card status-${lead.status}`;
+        div.dataset.id = lead.id;
+
+        let html = `<div class="card-header"><strong>${escapeHtml(lead.raw_input)}</strong>
+          <span class="badge badge-${lead.status}">${lead.status}</span></div>`;
+
+        if (lead.resolved_url) {
+          html += `<div class="url"><a href="${lead.resolved_url}" target="_blank" rel="noopener">${escapeHtml(lead.resolved_url)}</a></div>`;
+        }
+        if (lead.error_message) {
+          html += `<div class="error">${escapeHtml(lead.error_message)}</div>`;
+        }
+        if (lead.brief) {
+          const b = lead.brief;
+          html += `<div class="brief">
+            <div class="qualify ${b.is_b2b_qualified ? 'yes' : 'no'}">B2B Qualified: ${b.is_b2b_qualified ? 'YES' : 'NO'}</div>
+            <p class="reason">${escapeHtml(b.qualification_reason)}</p>
+            <h4>Company Overview</h4><p>${escapeHtml(b.company_overview)}</p>
+            <h4>Core Product / Service</h4><p>${escapeHtml(b.core_product_or_service)}</p>
+            <h4>Target Customer</h4><p>${escapeHtml(b.target_customer)}</p>
+            <h4>Sales Questions</h4><ul>${b.sales_questions.map(q => `<li>${escapeHtml(q)}</li>`).join('')}</ul>
+            <div class="confidence">Confidence: ${b.confidence}</div>
+          </div>`;
+        }
+        div.innerHTML = html;
+        container.appendChild(div);
+      });
+    }
+
+    document.getElementById('analyze-form').addEventListener('submit', () => {
+      document.getElementById('submit-btn').disabled = true;
+      document.getElementById('submit-btn').textContent = 'Running...';
+    });
+
+    setInterval(() => { if (hasInProgress()) refreshResults(); }, 2500);
+    window.addEventListener('DOMContentLoaded', () => { if (hasInProgress()) refreshResults(); });
+  </script>
+</body>
+</html>
